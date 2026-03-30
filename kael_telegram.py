@@ -17,7 +17,7 @@ def load():
 def save(u, k):
     m = load()
     m.append({"f": str(datetime.now()), "u": u, "k": k})
-    m = m[-100:]
+    m = m[-50:]
     with open(MF, "w") as f:
         json.dump(m, f, ensure_ascii=False)
 
@@ -25,11 +25,12 @@ def ctx():
     m = load()
     if not m:
         return ""
-    return "Conversaciones previas: " + " | ".join([f"JL:{x['u']} K:{x['k']}" for x in m[-5:]])
+    lines = "\n".join([f"- Juan Luis dijo: {x['u']}" for x in m[-10:]])
+    return f"Estas son las ultimas cosas que Juan Luis te dijo. Usaias para responder con coherencia:\n{lines}\n\n"
 
 def chat(msg):
     c = ctx()
-    p = (c + " JL dice: " + msg) if c else msg
+    p = f"{c}Juan Luis te dice ahora: {msg}\nResponde como KAEL, directo y coherente."
     r = subprocess.run(["ollama", "run", "kael", p], capture_output=True, text=True, timeout=120)
     resp = r.stdout.strip()
     save(msg, resp)
