@@ -40,17 +40,17 @@ def ctx():
     return f"Conversaciones previas:\n{lines}\n\n"
 
 def chat(msg):
-    necesita_busqueda = any(w in msg.lower() for w in ["busca","buscar","qué es","quien es","cuándo","donde","noticias","precio","clima","hoy","actual"])
+    necesita_busqueda = any(w in msg.lower() for w in ["busca","buscar","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo","reciente"])
     info_web = ""
     if necesita_busqueda:
         info_web = buscar(msg)
-    
+
     c = ctx()
     p = f"{c}"
     if info_web:
-        p += f"Informacion de internet sobre '{msg}':\n{info_web}\n\n"
-    p += f"Juan Luis dice: {msg}\nResponde como KAEL, directo y conciso."
-    
+        p += f"Estos son los resultados REALES de internet,usalos exactamente:\n{info_web}\n\n"
+    p += f"Juan Luis dice: {msg}\nResponde como KAEL. Si tienes info de internet usala tal cual. NO inventes datos. Si no tienes info real dilo. Maximo 3 oraciones."
+
     r = subprocess.run(["ollama", "run", "kael", p], capture_output=True, text=True, timeout=120)
     resp = r.stdout.strip()
     save(msg, resp)
