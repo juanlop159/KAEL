@@ -3,6 +3,7 @@ import subprocess
 import json
 import os
 from datetime import datetime
+from duckduckgo_search import DDGS
 
 TOKEN = "8279085726:AAHOD1RkAfCppGH8gCFYCRAJ4t4tGTSuaxA"
 MF = "/workspace/kael_memoria.json"
@@ -21,16 +22,35 @@ def save(u, k):
     with open(MF, "w") as f:
         json.dump(m, f, ensure_ascii=False)
 
+def buscar(query):
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=3))
+            if results:
+                return " | ".join([r['body'] for r in results])
+    except:
+        pass
+    return ""
+
 def ctx():
     m = load()
     if not m:
         return ""
-    lines = "\n".join([f"- Juan Luis dijo: {x['u']}" for x in m[-10:]])
-    return f"Estas son las ultimas cosas que Juan Luis te dijo. Usaias para responder con coherencia:\n{lines}\n\n"
+    lines = "\n".join([f"- Juan Luis dijo: {x['u']}" for x in m[-5:]])
+    return f"Conversaciones previas:\n{lines}\n\n"
 
 def chat(msg):
+    necesita_busqueda = any(w in msg.lower() for w in ["busca","buscar","qué es","quien es","cuándo","donde","noticias","precio","clima","hoy","actual"])
+    info_web = ""
+    if necesita_busqueda:
+        info_web = buscar(msg)
+    
     c = ctx()
-    p = f"{c}Juan Luis te dice ahora: {msg}\nResponde como KAEL, directo y coherente."
+    p = f"{c}"
+    if info_web:
+        p += f"Informacion de internet sobre '{msg}':\n{info_web}\n\n"
+    p += f"Juan Luis dice: {msg}\nResponde como KAEL, directo y conciso."
+    
     r = subprocess.run(["ollama", "run", "kael", p], capture_output=True, text=True, timeout=120)
     resp = r.stdout.strip()
     save(msg, resp)
@@ -41,5 +61,5 @@ def reply(m):
     bot.send_chat_action(m.chat.id, "typing")
     bot.reply_to(m, chat(m.text))
 
-print("KAEL activo")
+print("KAEL con internet activo")
 bot.polling(none_stop=True)
