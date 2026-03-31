@@ -6,8 +6,8 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 TOKEN = "8279085726:AAHOD1RkAfCppGH8gCFYCRAJ4t4tGTSuaxA"
-MF = "/workspace/kael_memoria.json"
-ML = "/workspace/kael_largo_plazo.json"
+MF = "kael_memoria.json"
+ML = "kael_largo_plazo.json"
 OLLAMA_URL = "https://4snn8ucg78igb2-11434.proxy.runpod.net"
 bot = telebot.TeleBot(TOKEN)
 
