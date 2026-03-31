@@ -1,3 +1,4 @@
 pyTelegramBotAPI
 ddgs
 requests
+chromadb
