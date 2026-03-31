@@ -4,32 +4,30 @@ import json
 import os
 from datetime import datetime
 from ddgs import DDGS
+import chromadb
 
 TOKEN = "8279085726:AAHOD1RkAfCppGH8gCFYCRAJ4t4tGTSuaxA"
-MF = "kael_memoria.json"
-ML = "kael_largo_plazo.json"
 OLLAMA_URL = "https://4snn8ucg78igb2-11434.proxy.runpod.net"
 bot = telebot.TeleBot(TOKEN)
 
-def load(f):
-    if os.path.exists(f):
-        with open(f) as x:
-            return json.load(x)
-    return []
+client = chromadb.PersistentClient(path="kael_db")
+memoria = client.get_or_create_collection("kael")
 
-def save_corta(u, k):
-    m = load(MF)
-    m.append({"f": str(datetime.now()), "u": u, "k": k})
-    m = m[-10:]
-    with open(MF, "w") as f:
-        json.dump(m, f, ensure_ascii=False)
+def guardar(texto, tipo="hecho"):
+    try:
+        id = datetime.now().strftime("%Y%m%d%H%M%S%f")
+        memoria.add(documents=[texto], ids=[id], metadatas=[{"tipo": tipo}])
+    except:
+        pass
 
-def save_larga(hecho):
-    m = load(ML)
-    if hecho not in m:
-        m.append(hecho)
-    with open(ML, "w") as f:
-        json.dump(m, f, ensure_ascii=False)
+def buscar_memoria(query):
+    try:
+        results = memoria.query(query_texts=[query], n_results=5)
+        if results["documents"][0]:
+            return " | ".join(results["documents"][0])
+    except:
+        pass
+    return ""
 
 def detectar_correccion(msg):
     palabras = ["eso estuvo mal","no me respondas asi","no hagas eso","estuviste mal","no inventes","eso estuvo incorrecto","no me digas asi","corrigete"]
@@ -39,13 +37,7 @@ def detectar_preferencia(msg):
     palabras = ["no me llames","prefiero","no me digas","me gusta","no me gusta","recuerda","soy","me llamo","estudio","trabajo","vivo","odio","amo","mi color","mi peli","mi cancion","llamame"]
     return any(p in msg.lower() for p in palabras)
 
-def ctx():
-    largo = load(ML)
-    if not largo:
-        return ""
-    return "Hechos y reglas del usuario: " + ", ".join(largo[:8]) + "\n\n"
-
-def buscar(query):
+def buscar_web(query):
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=3))
@@ -57,7 +49,7 @@ def buscar(query):
 
 def chat(msg):
     if detectar_correccion(msg):
-        save_larga(f"REGLA: Nunca hacer esto: {msg}")
+        guardar(f"REGLA: Nunca hacer esto: {msg}", "regla")
 
     if detectar_preferencia(msg):
         try:
@@ -68,14 +60,20 @@ def chat(msg):
             )
             hecho = response.json().get("response", "").strip()
             if hecho:
-                save_larga(hecho)
+                guardar(hecho, "preferencia")
         except:
             pass
 
-    necesita_busqueda = any(w in msg.lower() for w in ["busca","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo"])
-    info_web = buscar(msg) if necesita_busqueda else ""
+    guardar(f"Usuario dijo: {msg}", "conversacion")
 
-    p = ctx()
+    necesita_busqueda = any(w in msg.lower() for w in ["busca","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo"])
+    info_web = buscar_web(msg) if necesita_busqueda else ""
+
+    mem = buscar_memoria(msg)
+
+    p = ""
+    if mem:
+        p += f"Lo que recuerdas relevante: {mem}\n\n"
     if info_web:
         p += f"Info internet: {info_web}\n\n"
     p += f"Usuario dice: {msg}\nResponde en UNA oracion. Sin saludos. Sin inventar nada."
@@ -86,11 +84,11 @@ def chat(msg):
             json={"model": "kael", "prompt": p, "stream": False},
             timeout=120
         )
-        resp = response.json().get("response", "No pude conectarme al servidor.").strip()
+        resp = response.json().get("response", "No pude conectarme.").strip()
     except:
         resp = "Estoy en modo reposo. Enciéndeme para respuestas completas."
 
-    save_corta(msg, resp)
+    guardar(f"KAEL respondio: {resp}", "conversacion")
     return resp
 
 @bot.message_handler(func=lambda m: True)
@@ -98,5 +96,5 @@ def reply(m):
     bot.send_chat_action(m.chat.id, "typing")
     bot.reply_to(m, chat(m.text))
 
-print("KAEL activo")
+print("KAEL con memoria vectorial activo")
 bot.polling(none_stop=True)
