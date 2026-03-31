@@ -60,17 +60,6 @@ def ollama(prompt, timeout=30):
 def agente_clasificador(msg):
     return ollama(f'Clasifica en UNA palabra: medico, busqueda, personal, general.\nMensaje: "{msg}"\nClasificacion:', timeout=8).lower().strip()
 
-def agente_emocional(msg):
-    # Solo detecta si hay señales CLARAS de emoción, no inventa
-    palabras_estres = ["estresado","cansado","ansioso","triste","preocupado","agobiado","no puedo","ayuda","mal dia"]
-    palabras_feliz = ["feliz","contento","emocionado","genial","que bien","increible"]
-    msg_lower = msg.lower()
-    if any(p in msg_lower for p in palabras_estres):
-        return "estresado"
-    if any(p in msg_lower for p in palabras_feliz):
-        return "feliz"
-    return "normal"
-
 def agente_razonador(msg, mem, info_web, tipo):
     contexto_extra = "Razona con perspectiva clinica." if tipo == "medico" else ""
     return ollama(f'''Analiza brevemente antes de responder.
@@ -95,7 +84,7 @@ def agente_patrones(msg):
 def agente_proactivo(mem, msg):
     if not mem or len(mem) < 20:
         return ""
-    obs = ollama(f'Solo si hay algo URGENTE e importante basado en la memoria, menciona en 1 oracion. Si no hay nada urgente: NADA\nMemoria: {mem}\nMensaje: "{msg}"\nObservacion:', timeout=8)
+    obs = ollama(f'Solo si hay algo URGENTE e importante basado en la memoria, menciona en 1 oracion. Si no: NADA\nMemoria: {mem}\nMensaje: "{msg}"\nObservacion:', timeout=8)
     return "" if not obs or "NADA" in obs else obs
 
 def procesar(msg, chat_id):
@@ -109,7 +98,6 @@ def procesar(msg, chat_id):
 
     mem = buscar_memoria(msg)
     tipo = agente_clasificador(msg)
-    estado = agente_emocional(msg)
 
     necesita_busqueda = tipo == "busqueda" or any(w in msg.lower() for w in ["busca","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo"])
     info_web = buscar_web(msg) if necesita_busqueda else ""
@@ -129,13 +117,12 @@ def procesar(msg, chat_id):
 Razonamiento: {razonamiento}
 Memoria relevante: {mem if mem else "nada aun"}
 {f"Internet: {info_web}" if info_web else ""}
-{f"Estado emocional detectado: {estado}" if estado != "normal" else ""}
 {f"Nota proactiva: {proactivo}" if proactivo else ""}
 {f"Plan de accion: {plan}" if plan else ""}
 
 Juan Luis dice: "{msg}"
 
-Responde natural y directo. Maximo 3 oraciones. Sin saludos. SOLO cuando sea NECESARIO menciona su estado emocional. SOLO español:"""
+Responde natural y directo. Maximo 3 oraciones. Sin saludos. SOLO español:"""
 
     respuesta = ollama(prompt, timeout=60)
 
