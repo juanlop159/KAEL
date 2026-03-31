@@ -22,31 +22,15 @@ def guardar(texto, tipo="hecho"):
 
 def buscar_memoria(query):
     try:
-        results = memoria.query(query_texts=[query], n_results=5)
+        results = memoria.query(query_texts=[query], n_results=3)
         if results["documents"][0]:
             return " | ".join(results["documents"][0])
     except:
         pass
     return ""
 
-def limpiar_memoria():
-    try:
-        client.delete_collection("kael")
-        client.get_or_create_collection("kael")
-        return True
-    except:
-        return False
-
-def detectar_correccion(msg):
-    palabras = ["eso estuvo mal","no me respondas asi","no hagas eso","estuviste mal","no inventes","eso estuvo incorrecto","no me digas asi","corrigete"]
-    return any(p in msg.lower() for p in palabras)
-
-def detectar_preferencia(msg):
-    palabras = ["no me llames","prefiero","no me digas","me gusta","no me gusta","recuerda","soy","me llamo","estudio","trabajo","vivo","odio","amo","mi color","mi peli","mi cancion","llamame"]
-    return any(p in msg.lower() for p in palabras)
-
 def detectar_reset(msg):
-    palabras = ["olvida todo","borra tu memoria","resetea","empieza de cero","limpia tu memoria","olvida lo que sabes"]
+    palabras = ["olvida todo","borra tu memoria","resetea","empieza de cero","limpia tu memoria"]
     return any(p in msg.lower() for p in palabras)
 
 def buscar_web(query):
@@ -61,38 +45,23 @@ def buscar_web(query):
 
 def chat(msg):
     if detectar_reset(msg):
-        limpiar_memoria()
-        return "Memoria limpiada. Empezamos de cero."
+        client.delete_collection("kael")
+        client.get_or_create_collection("kael")
+        return "Memoria limpiada."
 
-    if detectar_correccion(msg):
-        guardar(f"REGLA: Nunca hacer esto: {msg}", "regla")
-
-    if detectar_preferencia(msg):
-        try:
-            response = requests.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={"model": "kael", "prompt": f"Extrae el hecho clave en menos de 8 palabras: '{msg}'", "stream": False},
-                timeout=60
-            )
-            hecho = response.json().get("response", "").strip()
-            if hecho:
-                guardar(hecho, "preferencia")
-        except:
-            pass
-
-    guardar(f"Usuario dijo: {msg}", "conversacion")
+    guardar(f"Usuario: {msg}", "conversacion")
 
     necesita_busqueda = any(w in msg.lower() for w in ["busca","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo"])
     info_web = buscar_web(msg) if necesita_busqueda else ""
 
     mem = buscar_memoria(msg)
 
-    p = ""
+    p = "Eres KAEL, asistente personal inteligente. Conversas de forma natural y directa. Sin saludos repetitivos. Sin inventar datos. En español.\n\n"
     if mem:
-        p += f"Lo que recuerdas relevante: {mem}\n\n"
+        p += f"Contexto relevante: {mem}\n\n"
     if info_web:
-        p += f"Info internet: {info_web}\n\n"
-    p += f"Usuario dice: {msg}\nResponde en UNA oracion. SOLO usa informacion que tienes en memoria. Si no tienes el dato exacto di que no lo sabes. Sin saludos."
+        p += f"Info de internet: {info_web}\n\n"
+    p += f"Usuario: {msg}\nKAEL:"
 
     try:
         response = requests.post(
@@ -102,9 +71,9 @@ def chat(msg):
         )
         resp = response.json().get("response", "No pude conectarme.").strip()
     except:
-        resp = "Estoy en modo reposo. Enciéndeme para respuestas completas."
+        resp = "Estoy en modo reposo."
 
-    guardar(f"KAEL respondio: {resp}", "conversacion")
+    guardar(f"KAEL: {resp}", "conversacion")
     return resp
 
 @bot.message_handler(func=lambda m: True)
