@@ -1,0 +1,2 @@
+pyTelegramBotAPI
+duckduckgo-search
