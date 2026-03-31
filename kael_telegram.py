@@ -19,7 +19,7 @@ def load(f):
 def save_corta(u, k):
     m = load(MF)
     m.append({"f": str(datetime.now()), "u": u, "k": k})
-    m = m[-20:]
+    m = m[-10:]
     with open(MF, "w") as f:
         json.dump(m, f, ensure_ascii=False)
 
@@ -34,19 +34,11 @@ def detectar_preferencia(msg):
     palabras = ["no me llames","prefiero","no me digas","me gusta","no me gusta","recuerda","soy","me llamo","estudio","trabajo","vivo","odio","amo","mi color","mi peli","mi cancion","llamame"]
     return any(p in msg.lower() for p in palabras)
 
-def buscar_memoria_relevante(msg):
+def ctx():
     largo = load(ML)
     if not largo:
         return ""
-    palabras_msg = set(msg.lower().split())
-    relevantes = []
-    for hecho in largo:
-        palabras_hecho = set(hecho.lower().split())
-        if palabras_msg & palabras_hecho:
-            relevantes.append(hecho)
-    if relevantes:
-        return "Recuerdas esto relevante: " + " | ".join(relevantes[:3])
-    return ""
+    return "Hechos del usuario: " + ", ".join(largo[:5]) + "\n\n"
 
 def buscar(query):
     try:
@@ -61,7 +53,7 @@ def buscar(query):
 def chat(msg):
     if detectar_preferencia(msg):
         extrae = subprocess.run(
-            ["ollama", "run", "kael", f"Extrae el hecho clave de esta frase en menos de 10 palabras: '{msg}'"],
+            ["ollama", "run", "kael", f"Extrae el hecho clave en menos de 8 palabras: '{msg}'"],
             capture_output=True, text=True, timeout=60
         )
         hecho = extrae.stdout.strip()
@@ -71,19 +63,12 @@ def chat(msg):
     necesita_busqueda = any(w in msg.lower() for w in ["busca","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo"])
     info_web = buscar(msg) if necesita_busqueda else ""
 
-    mem_relevante = buscar_memoria_relevante(msg)
-    corto = load(MF)
-
-    p = ""
-    if mem_relevante:
-        p += f"{mem_relevante}\n\n"
-    if corto:
-        p += "Ultimos mensajes:\n" + "\n".join([f"JL: {x['u']}" for x in corto[-3:]]) + "\n\n"
+    p = ctx()
     if info_web:
         p += f"Info internet: {info_web}\n\n"
-    p += f"JL dice: {msg}\nResponde directo, maximo 2 oraciones, sin saludos, sin emojis."
+    p += f"Usuario dice: {msg}\nResponde en UNA oracion. Sin saludos. Sin inventar nada."
 
-    r = subprocess.run(["ollama", "run", "kael", p], capture_output=True, text=True, timeout=300)
+    r = subprocess.run(["ollama", "run", "kael", p], capture_output=True, text=True, timeout=120)
     resp = r.stdout.strip()
     save_corta(msg, resp)
     return resp
