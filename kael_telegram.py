@@ -83,7 +83,7 @@ def chat(msg):
         p += f"Info internet: {info_web}\n\n"
     p += f"JL dice: {msg}\nResponde directo, maximo 2 oraciones, sin saludos, sin emojis."
 
-    r = subprocess.run(["ollama", "run", "kael", p], capture_output=True, text=True, timeout=120)
+    r = subprocess.run(["ollama", "run", "kael", p], capture_output=True, text=True, timeout=300)
     resp = r.stdout.strip()
     save_corta(msg, resp)
     return resp
