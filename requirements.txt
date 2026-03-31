@@ -2,3 +2,4 @@ pyTelegramBotAPI
 ddgs
 requests
 chromadb
+flask
