@@ -5,10 +5,14 @@ import os
 from datetime import datetime
 from ddgs import DDGS
 import chromadb
+from flask import Flask, request
 
 TOKEN = "8279085726:AAHOD1RkAfCppGH8gCFYCRAJ4t4tGTSuaxA"
 OLLAMA_URL = "https://4snn8ucg78igb2-11434.proxy.runpod.net"
+WEBHOOK_URL = "https://kael-production-16c8.up.railway.app"
+
 bot = telebot.TeleBot(TOKEN)
+app = Flask(__name__)
 
 client = chromadb.PersistentClient(path="kael_db")
 memoria = client.get_or_create_collection("kael")
@@ -42,7 +46,7 @@ def buscar_web(query):
         pass
     return ""
 
-def ollama(prompt, timeout=20):
+def ollama(prompt, timeout=30):
     try:
         response = requests.post(
             f"{OLLAMA_URL}/api/generate",
@@ -53,108 +57,47 @@ def ollama(prompt, timeout=20):
     except:
         return ""
 
-def ollama_stream(prompt, chat_id, message_id):
-    try:
-        response = requests.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={"model": "kael", "prompt": prompt, "stream": True},
-            stream=True,
-            timeout=60
-        )
-        texto = ""
-        ultimo_update = ""
-        contador = 0
-        for line in response.iter_lines():
-            if line:
-                data = json.loads(line)
-                token = data.get("response", "")
-                texto += token
-                contador += 1
-                if contador % 8 == 0 and texto.strip() != ultimo_update:
-                    try:
-                        bot.edit_message_text(texto + "▌", chat_id, message_id)
-                        ultimo_update = texto
-                    except:
-                        pass
-                if data.get("done"):
-                    break
-        try:
-            bot.edit_message_text(texto.strip(), chat_id, message_id)
-        except:
-            pass
-        return texto.strip()
-    except:
-        return ""
-
 def agente_clasificador(msg):
-    prompt = f"""Clasifica en UNA palabra: medico, busqueda, personal, general, emocional.
-Mensaje: "{msg}"
-Clasificacion:"""
-    return ollama(prompt, timeout=8).lower().strip()
+    return ollama(f'Clasifica en UNA palabra: medico, busqueda, personal, general, emocional.\nMensaje: "{msg}"\nClasificacion:', timeout=8).lower().strip()
 
 def agente_emocional(msg):
-    prompt = f"""Estado emocional en UNA palabra: estresado, cansado, feliz, ansioso, normal.
-Mensaje: "{msg}"
-Estado:"""
-    return ollama(prompt, timeout=8).lower().strip()
+    return ollama(f'Estado emocional en UNA palabra: estresado, cansado, feliz, ansioso, normal.\nMensaje: "{msg}"\nEstado:', timeout=8).lower().strip()
 
 def agente_razonador(msg, mem, info_web, tipo, estado):
-    contexto_extra = ""
-    if tipo == "medico":
-        contexto_extra = "Razona con perspectiva clinica."
-    elif estado in ["estresado", "ansioso", "cansado"]:
-        contexto_extra = f"Usuario parece {estado}. Se empatico."
-
-    prompt = f"""Analiza antes de responder.
-Memoria de Juan Luis: {mem if mem else 'nada aun'}
-{f'Info internet: {info_web}' if info_web else ''}
+    contexto_extra = "Razona con perspectiva clinica." if tipo == "medico" else f"Usuario parece {estado}. Se empatico." if estado in ["estresado","ansioso","cansado"] else ""
+    return ollama(f'''Analiza antes de responder.
+Memoria: {mem if mem else "nada"}
+{f"Internet: {info_web}" if info_web else ""}
 Tipo: {tipo} | Estado: {estado}
 {contexto_extra}
 Mensaje: "{msg}"
-Que quiere realmente? Que se relevante? Es urgente?
-Razonamiento breve:"""
-    return ollama(prompt, timeout=15)
+Que quiere? Que es relevante? Es urgente?
+Razonamiento:''', timeout=20)
 
 def agente_planificador(msg, razonamiento):
-    palabras = ["haz","agenda","recuerda","programa","crea","planifica","organiza"]
-    if not any(p in msg.lower() for p in palabras):
+    if not any(p in msg.lower() for p in ["haz","agenda","recuerda","programa","crea","planifica","organiza"]):
         return ""
-    prompt = f"""Divide esta tarea en pasos.
-Tarea: "{msg}"
-Pasos (max 3 lineas). Si necesitas calendario: [REQUIERE_CALENDARIO]:"""
-    return ollama(prompt, timeout=10)
+    return ollama(f'Divide en pasos (max 3). Si necesitas calendario: [REQUIERE_CALENDARIO]\nTarea: "{msg}"\nPasos:', timeout=10)
 
 def agente_patrones(msg):
-    prompt = f"""Hay algun patron de comportamiento en este mensaje?
-Mensaje: "{msg}"
-Si si, menos de 10 palabras. Si no: NINGUNO
-Patron:"""
-    patron = ollama(prompt, timeout=8)
+    patron = ollama(f'Patron de comportamiento en este mensaje? Si si, menos de 10 palabras. Si no: NINGUNO\nMensaje: "{msg}"\nPatron:', timeout=8)
     if patron and "NINGUNO" not in patron:
         guardar(f"PATRON: {patron}", "patron")
 
 def agente_proactivo(mem, msg):
     if not mem:
         return ""
-    prompt = f"""Hay algo proactivo URGENTE que mencionar basado en la memoria?
-Memoria: {mem}
-Mensaje: "{msg}"
-Solo si es muy relevante. Si no: NADA
-Observacion:"""
-    obs = ollama(prompt, timeout=8)
-    if not obs or "NADA" in obs:
-        return ""
-    return obs
+    obs = ollama(f'Algo proactivo urgente basado en memoria?\nMemoria: {mem}\nMensaje: "{msg}"\nSolo si es relevante. Si no: NADA\nObservacion:', timeout=8)
+    return "" if not obs or "NADA" in obs else obs
 
-def chat(msg, chat_id, message_id):
+def procesar(msg, chat_id):
     if detectar_reset(msg):
         client.delete_collection("kael")
         client.get_or_create_collection("kael")
-        bot.edit_message_text("Memoria limpiada.", chat_id, message_id)
+        bot.send_message(chat_id, "Memoria limpiada.")
         return
 
     guardar(f"Usuario: {msg}", "conversacion")
-
     mem = buscar_memoria(msg)
     tipo = agente_clasificador(msg)
     estado = agente_emocional(msg)
@@ -172,32 +115,41 @@ def chat(msg, chat_id, message_id):
         if hecho:
             guardar(hecho, "preferencia")
 
-    prompt_respuesta = f"""Eres KAEL, asistente personal de Juan Luis Lopez Hinojosa. Estudiante de medicina en la UDEM, musico de Monterrey. Inteligente, directo, como persona real. SOLO español.
+    prompt = f"""Eres KAEL, asistente personal de Juan Luis Lopez Hinojosa. Estudiante de medicina en la UDEM, musico de Monterrey. Directo, inteligente, como persona real. SOLO español.
 
 Razonamiento: {razonamiento}
-Memoria: {mem if mem else 'nada aun'}
-{f'Internet: {info_web}' if info_web else ''}
+Memoria: {mem if mem else "nada"}
+{f"Internet: {info_web}" if info_web else ""}
 Estado: {estado}
-{f'Nota proactiva: {proactivo}' if proactivo else ''}
-{f'Plan: {plan}' if plan else ''}
+{f"Nota proactiva: {proactivo}" if proactivo else ""}
+{f"Plan: {plan}" if plan else ""}
 
 Juan Luis dice: "{msg}"
 
 Responde natural. Maximo 3 oraciones. Sin saludos. SOLO español:"""
 
-    respuesta = ollama_stream(prompt_respuesta, chat_id, message_id)
+    respuesta = ollama(prompt, timeout=60)
 
     if not respuesta:
-        bot.edit_message_text("Estoy en modo reposo.", chat_id, message_id)
-        return
+        respuesta = "Estoy en modo reposo."
 
     guardar(f"KAEL: {respuesta}", "conversacion")
+    bot.send_message(chat_id, respuesta)
 
-@bot.message_handler(func=lambda m: True)
-def reply(m):
-    bot.send_chat_action(m.chat.id, "typing")
-    msg_enviado = bot.reply_to(m, "...")
-    chat(m.text, m.chat.id, msg_enviado.message_id)
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = telebot.types.Update.de_json(request.data.decode("utf-8"))
+    if update.message and update.message.text:
+        bot.send_chat_action(update.message.chat.id, "typing")
+        procesar(update.message.text, update.message.chat.id)
+    return "OK", 200
 
-print("KAEL multi-agente con streaming activo")
-bot.polling(none_stop=True)
+@app.route("/")
+def index():
+    return "KAEL activo", 200
+
+if __name__ == "__main__":
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
+    print("KAEL webhook activo")
+    app.run(host="0.0.0.0", port=8080)
