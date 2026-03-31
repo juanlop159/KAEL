@@ -1,1 +1,1 @@
-worker: python3 kael_telegram.py
+web: python3 kael_telegram.py
