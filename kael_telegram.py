@@ -76,7 +76,7 @@ def chat(msg):
         p += f"Lo que recuerdas relevante: {mem}\n\n"
     if info_web:
         p += f"Info internet: {info_web}\n\n"
-    p += f"Usuario dice: {msg}\nResponde en UNA oracion. Sin saludos. Sin inventar nada."
+    p += f"Usuario dice: {msg}\nResponde en UNA oracion. SOLO usa informacion que tienes en memoria. Si no tienes el dato exacto di que no lo sabes. Sin saludos."
 
     try:
         response = requests.post(
