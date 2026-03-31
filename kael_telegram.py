@@ -3,7 +3,7 @@ import requests
 import json
 import os
 from datetime import datetime
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 TOKEN = "8279085726:AAHOD1RkAfCppGH8gCFYCRAJ4t4tGTSuaxA"
 MF = "kael_memoria.json"
