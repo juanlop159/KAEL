@@ -29,12 +29,24 @@ def buscar_memoria(query):
         pass
     return ""
 
+def limpiar_memoria():
+    try:
+        client.delete_collection("kael")
+        client.get_or_create_collection("kael")
+        return True
+    except:
+        return False
+
 def detectar_correccion(msg):
     palabras = ["eso estuvo mal","no me respondas asi","no hagas eso","estuviste mal","no inventes","eso estuvo incorrecto","no me digas asi","corrigete"]
     return any(p in msg.lower() for p in palabras)
 
 def detectar_preferencia(msg):
     palabras = ["no me llames","prefiero","no me digas","me gusta","no me gusta","recuerda","soy","me llamo","estudio","trabajo","vivo","odio","amo","mi color","mi peli","mi cancion","llamame"]
+    return any(p in msg.lower() for p in palabras)
+
+def detectar_reset(msg):
+    palabras = ["olvida todo","borra tu memoria","resetea","empieza de cero","limpia tu memoria","olvida lo que sabes"]
     return any(p in msg.lower() for p in palabras)
 
 def buscar_web(query):
@@ -48,6 +60,10 @@ def buscar_web(query):
     return ""
 
 def chat(msg):
+    if detectar_reset(msg):
+        limpiar_memoria()
+        return "Memoria limpiada. Empezamos de cero."
+
     if detectar_correccion(msg):
         guardar(f"REGLA: Nunca hacer esto: {msg}", "regla")
 
@@ -96,5 +112,5 @@ def reply(m):
     bot.send_chat_action(m.chat.id, "typing")
     bot.reply_to(m, chat(m.text))
 
-print("KAEL con memoria vectorial activo")
+print("KAEL activo")
 bot.polling(none_stop=True)
