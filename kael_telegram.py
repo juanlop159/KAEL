@@ -30,6 +30,10 @@ def save_larga(hecho):
     with open(ML, "w") as f:
         json.dump(m, f, ensure_ascii=False)
 
+def detectar_correccion(msg):
+    palabras = ["eso estuvo mal","no me respondas asi","no hagas eso","estuviste mal","no inventes","eso estuvo incorrecto","no me digas asi","corrigete"]
+    return any(p in msg.lower() for p in palabras)
+
 def detectar_preferencia(msg):
     palabras = ["no me llames","prefiero","no me digas","me gusta","no me gusta","recuerda","soy","me llamo","estudio","trabajo","vivo","odio","amo","mi color","mi peli","mi cancion","llamame"]
     return any(p in msg.lower() for p in palabras)
@@ -38,7 +42,7 @@ def ctx():
     largo = load(ML)
     if not largo:
         return ""
-    return "Hechos del usuario: " + ", ".join(largo[:5]) + "\n\n"
+    return "Hechos y reglas del usuario: " + ", ".join(largo[:8]) + "\n\n"
 
 def buscar(query):
     try:
@@ -51,6 +55,9 @@ def buscar(query):
     return ""
 
 def chat(msg):
+    if detectar_correccion(msg):
+        save_larga(f"REGLA: Nunca hacer esto: {msg}")
+
     if detectar_preferencia(msg):
         extrae = subprocess.run(
             ["ollama", "run", "kael", f"Extrae el hecho clave en menos de 8 palabras: '{msg}'"],
