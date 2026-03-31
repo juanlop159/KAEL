@@ -31,7 +31,7 @@ def save_larga(hecho):
         json.dump(m, f, ensure_ascii=False)
 
 def detectar_preferencia(msg):
-    palabras = ["no me llames","prefiero","no me digas","me gusta","no me gusta","recuerda que","soy","me llamo","estudio","trabajo","vivo"]
+    palabras = ["no me llames","prefiero","no me digas","me gusta","no me gusta","recuerda que","soy","me llamo","estudio","trabajo","vivo","mi color","mi pelicula","mi cancion","odio","amo"]
     return any(p in msg.lower() for p in palabras)
 
 def buscar(query):
@@ -47,10 +47,9 @@ def buscar(query):
 def ctx():
     largo = load(ML)
     corto = load(MF)
-    
     p = ""
     if largo:
-        p += "Lo que sabes permanentemente de Juan Luis:\n"
+        p += "Lo que sabes de Juan Luis:\n"
         p += "\n".join([f"- {x}" for x in largo])
         p += "\n\n"
     if corto:
@@ -61,8 +60,14 @@ def ctx():
 
 def chat(msg):
     if detectar_preferencia(msg):
-        save_larga(msg)
-    
+        extrae = subprocess.run(
+            ["ollama", "run", "kael", f"De este mensaje extrae SOLO el hecho importante sobre Juan Luis en una frase corta, sin explicacion: '{msg}'"],
+            capture_output=True, text=True, timeout=60
+        )
+        hecho = extrae.stdout.strip()
+        if hecho:
+            save_larga(hecho)
+
     necesita_busqueda = any(w in msg.lower() for w in ["busca","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo"])
     info_web = buscar(msg) if necesita_busqueda else ""
 
