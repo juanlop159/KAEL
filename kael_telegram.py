@@ -7,20 +7,32 @@ from duckduckgo_search import DDGS
 
 TOKEN = "8279085726:AAHOD1RkAfCppGH8gCFYCRAJ4t4tGTSuaxA"
 MF = "/workspace/kael_memoria.json"
+ML = "/workspace/kael_largo_plazo.json"
 bot = telebot.TeleBot(TOKEN)
 
-def load():
-    if os.path.exists(MF):
-        with open(MF) as f:
-            return json.load(f)
+def load(f):
+    if os.path.exists(f):
+        with open(f) as x:
+            return json.load(x)
     return []
 
-def save(u, k):
-    m = load()
+def save_corta(u, k):
+    m = load(MF)
     m.append({"f": str(datetime.now()), "u": u, "k": k})
-    m = m[-50:]
+    m = m[-30:]
     with open(MF, "w") as f:
         json.dump(m, f, ensure_ascii=False)
+
+def save_larga(hecho):
+    m = load(ML)
+    if hecho not in m:
+        m.append(hecho)
+    with open(ML, "w") as f:
+        json.dump(m, f, ensure_ascii=False)
+
+def detectar_preferencia(msg):
+    palabras = ["no me llames","prefiero","no me digas","me gusta","no me gusta","recuerda que","soy","me llamo","estudio","trabajo","vivo"]
+    return any(p in msg.lower() for p in palabras)
 
 def buscar(query):
     try:
@@ -33,27 +45,35 @@ def buscar(query):
     return ""
 
 def ctx():
-    m = load()
-    if not m:
-        return ""
-    lines = "\n".join([f"- Juan Luis dijo: {x['u']}" for x in m[-5:]])
-    return f"Conversaciones previas:\n{lines}\n\n"
+    largo = load(ML)
+    corto = load(MF)
+    
+    p = ""
+    if largo:
+        p += "Lo que sabes permanentemente de Juan Luis:\n"
+        p += "\n".join([f"- {x}" for x in largo])
+        p += "\n\n"
+    if corto:
+        p += "Conversacion reciente:\n"
+        p += "\n".join([f"JL: {x['u']}" for x in corto[-5:]])
+        p += "\n\n"
+    return p
 
 def chat(msg):
-    necesita_busqueda = any(w in msg.lower() for w in ["busca","buscar","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo","reciente"])
-    info_web = ""
-    if necesita_busqueda:
-        info_web = buscar(msg)
+    if detectar_preferencia(msg):
+        save_larga(msg)
+    
+    necesita_busqueda = any(w in msg.lower() for w in ["busca","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo"])
+    info_web = buscar(msg) if necesita_busqueda else ""
 
-    c = ctx()
-    p = f"{c}"
+    p = ctx()
     if info_web:
-        p += f"Estos son los resultados REALES de internet,usalos exactamente:\n{info_web}\n\n"
-    p += f"Juan Luis dice: {msg}\nResponde como KAEL. Si tienes info de internet usala tal cual. NO inventes datos. Si no tienes info real dilo. Maximo 3 oraciones."
+        p += f"Info de internet: {info_web}\n\n"
+    p += f"JL dice: {msg}\nResponde como KAEL. Directo, maximo 3 oraciones, sin listas, sin emojis."
 
     r = subprocess.run(["ollama", "run", "kael", p], capture_output=True, text=True, timeout=120)
     resp = r.stdout.strip()
-    save(msg, resp)
+    save_corta(msg, resp)
     return resp
 
 @bot.message_handler(func=lambda m: True)
@@ -61,5 +81,5 @@ def reply(m):
     bot.send_chat_action(m.chat.id, "typing")
     bot.reply_to(m, chat(m.text))
 
-print("KAEL con internet activo")
+print("KAEL con memoria inteligente activo")
 bot.polling(none_stop=True)
