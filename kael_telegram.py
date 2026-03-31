@@ -19,7 +19,7 @@ def load(f):
 def save_corta(u, k):
     m = load(MF)
     m.append({"f": str(datetime.now()), "u": u, "k": k})
-    m = m[-30:]
+    m = m[-20:]
     with open(MF, "w") as f:
         json.dump(m, f, ensure_ascii=False)
 
@@ -31,8 +31,22 @@ def save_larga(hecho):
         json.dump(m, f, ensure_ascii=False)
 
 def detectar_preferencia(msg):
-    palabras = ["no me llames","prefiero","no me digas","me gusta","no me gusta","recuerda que","soy","me llamo","estudio","trabajo","vivo","mi color","mi pelicula","mi cancion","odio","amo"]
+    palabras = ["no me llames","prefiero","no me digas","me gusta","no me gusta","recuerda","soy","me llamo","estudio","trabajo","vivo","odio","amo","mi color","mi peli","mi cancion","llamame"]
     return any(p in msg.lower() for p in palabras)
+
+def buscar_memoria_relevante(msg):
+    largo = load(ML)
+    if not largo:
+        return ""
+    palabras_msg = set(msg.lower().split())
+    relevantes = []
+    for hecho in largo:
+        palabras_hecho = set(hecho.lower().split())
+        if palabras_msg & palabras_hecho:
+            relevantes.append(hecho)
+    if relevantes:
+        return "Recuerdas esto relevante: " + " | ".join(relevantes[:3])
+    return ""
 
 def buscar(query):
     try:
@@ -44,24 +58,10 @@ def buscar(query):
         pass
     return ""
 
-def ctx():
-    largo = load(ML)
-    corto = load(MF)
-    p = ""
-    if largo:
-        p += "Lo que sabes de Juan Luis:\n"
-        p += "\n".join([f"- {x}" for x in largo])
-        p += "\n\n"
-    if corto:
-        p += "Conversacion reciente:\n"
-        p += "\n".join([f"JL: {x['u']}" for x in corto[-5:]])
-        p += "\n\n"
-    return p
-
 def chat(msg):
     if detectar_preferencia(msg):
         extrae = subprocess.run(
-            ["ollama", "run", "kael", f"De este mensaje extrae SOLO el hecho importante sobre Juan Luis en una frase corta, sin explicacion: '{msg}'"],
+            ["ollama", "run", "kael", f"Extrae el hecho clave de esta frase en menos de 10 palabras: '{msg}'"],
             capture_output=True, text=True, timeout=60
         )
         hecho = extrae.stdout.strip()
@@ -71,10 +71,17 @@ def chat(msg):
     necesita_busqueda = any(w in msg.lower() for w in ["busca","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo"])
     info_web = buscar(msg) if necesita_busqueda else ""
 
-    p = ctx()
+    mem_relevante = buscar_memoria_relevante(msg)
+    corto = load(MF)
+
+    p = ""
+    if mem_relevante:
+        p += f"{mem_relevante}\n\n"
+    if corto:
+        p += "Ultimos mensajes:\n" + "\n".join([f"JL: {x['u']}" for x in corto[-3:]]) + "\n\n"
     if info_web:
-        p += f"Info de internet: {info_web}\n\n"
-    p += f"JL dice: {msg}\nResponde como KAEL. Directo, maximo 3 oraciones, sin listas, sin emojis."
+        p += f"Info internet: {info_web}\n\n"
+    p += f"JL dice: {msg}\nResponde directo, maximo 2 oraciones, sin saludos, sin emojis."
 
     r = subprocess.run(["ollama", "run", "kael", p], capture_output=True, text=True, timeout=120)
     resp = r.stdout.strip()
@@ -86,5 +93,5 @@ def reply(m):
     bot.send_chat_action(m.chat.id, "typing")
     bot.reply_to(m, chat(m.text))
 
-print("KAEL con memoria inteligente activo")
+print("KAEL activo")
 bot.polling(none_stop=True)
