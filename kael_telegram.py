@@ -67,7 +67,7 @@ def chat(msg):
         response = requests.post(
             f"{OLLAMA_URL}/api/generate",
             json={"model": "kael", "prompt": p, "stream": False},
-            timeout=120
+            timeout=25
         )
         resp = response.json().get("response", "No pude conectarme.").strip()
     except:
