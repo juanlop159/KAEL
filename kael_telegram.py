@@ -1,5 +1,5 @@
 import telebot
-import subprocess
+import requests
 import json
 import os
 from datetime import datetime
@@ -8,6 +8,7 @@ from duckduckgo_search import DDGS
 TOKEN = "8279085726:AAHOD1RkAfCppGH8gCFYCRAJ4t4tGTSuaxA"
 MF = "/workspace/kael_memoria.json"
 ML = "/workspace/kael_largo_plazo.json"
+OLLAMA_URL = "https://4snn8ucg78igb2-11434.proxy.runpod.net"
 bot = telebot.TeleBot(TOKEN)
 
 def load(f):
@@ -59,13 +60,17 @@ def chat(msg):
         save_larga(f"REGLA: Nunca hacer esto: {msg}")
 
     if detectar_preferencia(msg):
-        extrae = subprocess.run(
-            ["ollama", "run", "kael", f"Extrae el hecho clave en menos de 8 palabras: '{msg}'"],
-            capture_output=True, text=True, timeout=60
-        )
-        hecho = extrae.stdout.strip()
-        if hecho:
-            save_larga(hecho)
+        try:
+            response = requests.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={"model": "kael", "prompt": f"Extrae el hecho clave en menos de 8 palabras: '{msg}'", "stream": False},
+                timeout=60
+            )
+            hecho = response.json().get("response", "").strip()
+            if hecho:
+                save_larga(hecho)
+        except:
+            pass
 
     necesita_busqueda = any(w in msg.lower() for w in ["busca","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo"])
     info_web = buscar(msg) if necesita_busqueda else ""
@@ -75,8 +80,16 @@ def chat(msg):
         p += f"Info internet: {info_web}\n\n"
     p += f"Usuario dice: {msg}\nResponde en UNA oracion. Sin saludos. Sin inventar nada."
 
-    r = subprocess.run(["ollama", "run", "kael", p], capture_output=True, text=True, timeout=120)
-    resp = r.stdout.strip()
+    try:
+        response = requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={"model": "kael", "prompt": p, "stream": False},
+            timeout=120
+        )
+        resp = response.json().get("response", "No pude conectarme al servidor.").strip()
+    except:
+        resp = "Estoy en modo reposo. Enciéndeme para respuestas completas."
+
     save_corta(msg, resp)
     return resp
 
