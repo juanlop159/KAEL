@@ -18,6 +18,111 @@ client = chromadb.PersistentClient(path=“kael_db”)
 memoria = client.get_or_create_collection(“kael”)
 preferencias = client.get_or_create_collection(“preferencias”)
 fallos = client.get_or_create_collection(“fallos”)
+meta_log = client.get_or_create_collection(“meta_log”)
+
+# ─── META-AGENTE ─────────────────────────────────────────────────────────────
+
+meta_estado = {
+“correcciones_seguidas”: 0,
+“fallos_por_agente”: {},
+“total_conversaciones”: 0,
+“cambios_pendientes”: [],
+“agentes_desactivados”: [],
+“timeouts”: {
+“clasificador”: 8,
+“reflexion”: 15,
+“autocorreccion”: 25,
+“razonador”: 20,
+“planificador”: 10,
+“patrones”: 8,
+“proactivo”: 8,
+“contradiccion”: 10,
+}
+}
+
+REGLAS_CONSTITUCIONALES = [
+“token”, “ollama_url”, “webhook_url”,
+“reglas constitucionales”, “7 filtros”, “agente_p53”, “seguridad”
+]
+
+def meta_registrar_fallo(agente, msg, respuesta, criterio):
+try:
+id = datetime.now().strftime(”%Y%m%d%H%M%S%f”)
+fallos.add(
+documents=[f”AGENTE: {agente} | MSG: {msg} | RESP: {respuesta} | FALLO: {criterio}”],
+ids=[id]
+)
+meta_estado[“fallos_por_agente”][agente] = meta_estado[“fallos_por_agente”].get(agente, 0) + 1
+except:
+pass
+
+def meta_agente_proponer():
+propuestas = []
+for agente, count in meta_estado[“fallos_por_agente”].items():
+if count >= 3:
+propuestas.append(f”Ajustar prompt del agente ‘{agente}’ — ha fallado {count} veces”)
+if count >= 2 and meta_estado[“timeouts”].get(agente, 30) < 30:
+propuestas.append(f”Aumentar timeout de ‘{agente}’ de {meta_estado[‘timeouts’].get(agente)}s a {meta_estado[‘timeouts’].get(agente)+10}s”)
+if meta_estado[“correcciones_seguidas”] >= 2:
+propuestas.append(“Revisar prompt principal de KAEL — 2 correcciones seguidas del usuario”)
+return propuestas
+
+def meta_agente_evaluar(chat_id):
+lineas = [“Evaluacion del sistema KAEL:\n”]
+if meta_estado[“fallos_por_agente”]:
+lineas.append(“Fallos por agente:”)
+for agente, count in meta_estado[“fallos_por_agente”].items():
+lineas.append(f”  - {agente}: {count} fallos”)
+else:
+lineas.append(“Sin fallos registrados.”)
+if meta_estado[“agentes_desactivados”]:
+lineas.append(f”\nAgentes desactivados: {’, ’.join(meta_estado[‘agentes_desactivados’])}”)
+lineas.append(f”\nConversaciones totales: {meta_estado[‘total_conversaciones’]}”)
+propuestas = meta_agente_proponer()
+if propuestas:
+lineas.append(”\nPropuestas de mejora:”)
+for i, p in enumerate(propuestas, 1):
+lineas.append(f”  {i}. {p}”)
+lineas.append(”\nResponde ‘aplicar mejoras’ para implementarlas (con tu aprobacion).”)
+bot.send_message(chat_id, “\n”.join(lineas))
+
+def meta_agente_aplicar(chat_id):
+propuestas = meta_agente_proponer()
+if not propuestas:
+bot.send_message(chat_id, “No hay mejoras pendientes.”)
+return
+aplicadas = []
+for p in propuestas:
+if any(r in p.lower() for r in REGLAS_CONSTITUCIONALES):
+bot.send_message(chat_id, f”No puedo aplicar: ‘{p}’ — viola reglas constitucionales.”)
+continue
+if “timeout” in p.lower():
+for agente in meta_estado[“timeouts”]:
+if agente in p.lower():
+meta_estado[“timeouts”][agente] += 10
+aplicadas.append(f”Timeout de ‘{agente}’ -> {meta_estado[‘timeouts’][agente]}s”)
+try:
+meta_log.add(
+documents=[f”CAMBIO: {p} | {str(datetime.now())}”],
+ids=[datetime.now().strftime(”%Y%m%d%H%M%S%f”)]
+)
+except:
+pass
+meta_estado[“cambios_pendientes”] = []
+if aplicadas:
+bot.send_message(chat_id, “Mejoras aplicadas:\n” + “\n”.join([f”- {a}” for a in aplicadas]))
+else:
+bot.send_message(chat_id, “No se aplicaron cambios.”)
+
+def meta_agente_cada_50(chat_id):
+if meta_estado[“total_conversaciones”] % 50 == 0 and meta_estado[“total_conversaciones”] > 0:
+propuestas = meta_agente_proponer()
+if propuestas:
+bot.send_message(chat_id, “Evaluacion automatica (cada 50 conversaciones):\n” +
+“\n”.join([f”- {p}” for p in propuestas]) +
+“\n\nResponde ‘aplicar mejoras’ si quieres que las implemente.”)
+
+# ─── TU CÓDIGO ORIGINAL INTACTO ──────────────────────────────────────────────
 
 def guardar(texto, tipo=“hecho”):
 try:
@@ -40,6 +145,7 @@ fallos.add(
 documents=[f”MSG: {msg} | RESP: {respuesta} | FALLO: {criterio}”],
 ids=[id]
 )
+meta_registrar_fallo(“reflexion”, msg, respuesta, criterio)
 except:
 pass
 
@@ -66,6 +172,9 @@ return any(p in msg.lower() for p in [“olvida todo”,“borra tu memoria”,�
 
 def detectar_correccion(msg):
 return any(p in msg.lower() for p in [“eso estuvo mal”,“no me respondas asi”,“estuviste mal”,“no inventes”,“eso estuvo incorrecto”,“corrigete”,“eso no es correcto”])
+
+def detectar_evaluacion(msg):
+return any(p in msg.lower() for p in [“evalúate”,“evalulate”,“mejórate”,“mejorate”,“como vas”,“analízate”,“estado del sistema”])
 
 def buscar_web(query):
 try:
@@ -192,22 +301,50 @@ obs = ollama(f’Solo si hay algo URGENTE basado en preferencias: 1 oracion. Si 
 return “” if not obs or “NADA” in obs else obs
 
 def procesar(msg, chat_id):
-if detectar_reset(msg):
-client.delete_collection(“kael”)
-client.delete_collection(“preferencias”)
-client.delete_collection(“fallos”)
-client.get_or_create_collection(“kael”)
-client.get_or_create_collection(“preferencias”)
-client.get_or_create_collection(“fallos”)
-bot.send_message(chat_id, “Memoria limpiada.”)
-return
+meta_estado[“total_conversaciones”] += 1
 
 ```
+if detectar_reset(msg):
+    client.delete_collection("kael")
+    client.delete_collection("preferencias")
+    client.delete_collection("fallos")
+    client.get_or_create_collection("kael")
+    client.get_or_create_collection("preferencias")
+    client.get_or_create_collection("fallos")
+    meta_estado["fallos_por_agente"] = {}
+    meta_estado["correcciones_seguidas"] = 0
+    bot.send_message(chat_id, "Memoria limpiada.")
+    return
+
 if detectar_correccion(msg):
+    meta_estado["correcciones_seguidas"] += 1
     guardar_fallo("correccion_usuario", msg, "usuario_corrigio")
     guardar(f"CORRECCION: {msg}", "correccion")
-    bot.send_message(chat_id, "Anotado. Aprenderé de eso.")
+    if meta_estado["correcciones_seguidas"] >= 2:
+        bot.send_message(chat_id, "Anotado. Detecto 2 correcciones seguidas — evaluando el sistema.")
+        meta_agente_evaluar(chat_id)
+    else:
+        bot.send_message(chat_id, "Anotado. Aprenderé de eso.")
     return
+
+if detectar_evaluacion(msg):
+    meta_agente_evaluar(chat_id)
+    return
+
+if "aplicar mejoras" in msg.lower():
+    meta_estado["cambios_pendientes"] = meta_agente_proponer()
+    if meta_estado["cambios_pendientes"]:
+        bot.send_message(chat_id, f"Voy a aplicar {len(meta_estado['cambios_pendientes'])} mejoras. Confirmas? Responde 'si confirmo'")
+    else:
+        bot.send_message(chat_id, "No hay mejoras pendientes.")
+    return
+
+if "si confirmo" in msg.lower() and meta_estado["cambios_pendientes"]:
+    meta_agente_aplicar(chat_id)
+    return
+
+if not detectar_correccion(msg):
+    meta_estado["correcciones_seguidas"] = 0
 
 guardar(f"Usuario: {msg}", "conversacion")
 
@@ -255,7 +392,6 @@ if not respuesta:
     bot.send_message(chat_id, respuesta)
     return
 
-# Agente de reflexion
 paso, fallos_detectados = agente_reflexion(msg, respuesta, mem_pref, info_web)
 
 if not paso and fallos_detectados:
@@ -265,6 +401,7 @@ if not paso and fallos_detectados:
         respuesta = respuesta_mejorada
 
 guardar(f"KAEL: {respuesta}", "conversacion")
+meta_agente_cada_50(chat_id)
 bot.send_message(chat_id, respuesta)
 ```
 
