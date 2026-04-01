@@ -16,6 +16,7 @@ app = Flask(__name__)
 
 client = chromadb.PersistentClient(path="kael_db")
 memoria = client.get_or_create_collection("kael")
+preferencias = client.get_or_create_collection("preferencias")
 
 def guardar(texto, tipo="hecho"):
     try:
@@ -24,9 +25,25 @@ def guardar(texto, tipo="hecho"):
     except:
         pass
 
+def guardar_preferencia(texto):
+    try:
+        id = datetime.now().strftime("%Y%m%d%H%M%S%f")
+        preferencias.add(documents=[texto], ids=[id])
+    except:
+        pass
+
 def buscar_memoria(query):
     try:
         results = memoria.query(query_texts=[query], n_results=5)
+        if results["documents"][0]:
+            return " | ".join(results["documents"][0])
+    except:
+        pass
+    return ""
+
+def buscar_preferencias(query):
+    try:
+        results = preferencias.query(query_texts=[query], n_results=5)
         if results["documents"][0]:
             return " | ".join(results["documents"][0])
     except:
@@ -60,16 +77,30 @@ def ollama(prompt, timeout=30):
 def agente_clasificador(msg):
     return ollama(f'Clasifica en UNA palabra: medico, busqueda, personal, general.\nMensaje: "{msg}"\nClasificacion:', timeout=8).lower().strip()
 
-def agente_razonador(msg, mem, info_web, tipo):
+def agente_contradiccion(msg, mem_pref):
+    if not mem_pref:
+        return ""
+    resultado = ollama(f'''Revisa si este mensaje contradice lo que ya sabes del usuario.
+Lo que sabes: {mem_pref}
+Mensaje nuevo: "{msg}"
+Si hay contradiccion clara responde: CONTRADICCION: [que contradice]
+Si no hay contradiccion: OK
+Resultado:''', timeout=10)
+    if "CONTRADICCION" in resultado:
+        return resultado.replace("CONTRADICCION:", "").strip()
+    return ""
+
+def agente_razonador(msg, mem, mem_pref, info_web, tipo):
     contexto_extra = "Razona con perspectiva clinica." if tipo == "medico" else ""
     return ollama(f'''Analiza brevemente antes de responder.
-Memoria de Juan Luis: {mem if mem else "nada aun"}
+Conversaciones recientes: {mem if mem else "nada aun"}
+Preferencias del usuario: {mem_pref if mem_pref else "nada aun"}
 {f"Internet: {info_web}" if info_web else ""}
 Tipo: {tipo}
 {contexto_extra}
 Mensaje: "{msg}"
-Que quiere realmente? Que memoria es relevante? Es urgente?
-Razonamiento breve:''', timeout=20)
+Que quiere realmente? Que es relevante? Es urgente?
+Razonamiento:''', timeout=20)
 
 def agente_planificador(msg, razonamiento):
     if not any(p in msg.lower() for p in ["haz","agenda","recuerda","programa","crea","planifica","organiza"]):
@@ -77,45 +108,55 @@ def agente_planificador(msg, razonamiento):
     return ollama(f'Divide en pasos concretos (max 3). Si necesitas calendario: [REQUIERE_CALENDARIO]\nTarea: "{msg}"\nPasos:', timeout=10)
 
 def agente_patrones(msg):
-    patron = ollama(f'Hay un patron claro de comportamiento o preferencia en este mensaje? Si si: menos de 10 palabras. Si no: NINGUNO\nMensaje: "{msg}"\nPatron:', timeout=8)
+    patron = ollama(f'Hay patron claro de comportamiento en este mensaje? Si si: menos de 10 palabras. Si no: NINGUNO\nMensaje: "{msg}"\nPatron:', timeout=8)
     if patron and "NINGUNO" not in patron and len(patron) < 100:
         guardar(f"PATRON: {patron}", "patron")
 
-def agente_proactivo(mem, msg):
-    if not mem or len(mem) < 20:
+def agente_proactivo(mem_pref, msg):
+    if not mem_pref or len(mem_pref) < 20:
         return ""
-    obs = ollama(f'Solo si hay algo URGENTE e importante basado en la memoria, menciona en 1 oracion. Si no: NADA\nMemoria: {mem}\nMensaje: "{msg}"\nObservacion:', timeout=8)
+    obs = ollama(f'Solo si hay algo URGENTE basado en preferencias del usuario: 1 oracion. Si no: NADA\nPreferencias: {mem_pref}\nMensaje: "{msg}"\nObservacion:', timeout=8)
     return "" if not obs or "NADA" in obs else obs
 
 def procesar(msg, chat_id):
     if detectar_reset(msg):
         client.delete_collection("kael")
+        client.delete_collection("preferencias")
         client.get_or_create_collection("kael")
+        client.get_or_create_collection("preferencias")
         bot.send_message(chat_id, "Memoria limpiada.")
         return
 
     guardar(f"Usuario: {msg}", "conversacion")
 
     mem = buscar_memoria(msg)
+    mem_pref = buscar_preferencias(msg)
     tipo = agente_clasificador(msg)
+
+    # Detectar contradiccion
+    contradiccion = agente_contradiccion(msg, mem_pref)
+    if contradiccion:
+        bot.send_message(chat_id, f"Espera — antes sabía que {contradiccion}. ¿Cambió algo?")
+        return
 
     necesita_busqueda = tipo == "busqueda" or any(w in msg.lower() for w in ["busca","que es","quien es","cuando","donde","noticias","precio","clima","hoy","actual","ultimo"])
     info_web = buscar_web(msg) if necesita_busqueda else ""
 
-    razonamiento = agente_razonador(msg, mem, info_web, tipo)
+    razonamiento = agente_razonador(msg, mem, mem_pref, info_web, tipo)
     agente_patrones(msg)
-    proactivo = agente_proactivo(mem, msg)
+    proactivo = agente_proactivo(mem_pref, msg)
     plan = agente_planificador(msg, razonamiento)
 
     if any(p in msg.lower() for p in ["me gusta","no me gusta","odio","amo","recuerda","prefiero","soy","estudio","trabajo","vivo","mi favorito","favorita"]):
         hecho = ollama(f"Extrae el hecho clave sobre el usuario en menos de 10 palabras: '{msg}'", timeout=8)
         if hecho and len(hecho) < 80:
-            guardar(hecho, "preferencia")
+            guardar_preferencia(hecho)
 
     prompt = f"""Eres KAEL, asistente personal de Juan Luis Lopez Hinojosa. Estudiante de medicina en la UDEM Monterrey, musico. Inteligente, directo, como persona real. SOLO español. NUNCA uses su nombre innecesariamente.
 
 Razonamiento: {razonamiento}
-Memoria relevante: {mem if mem else "nada aun"}
+Conversaciones recientes: {mem if mem else "nada aun"}
+Preferencias: {mem_pref if mem_pref else "nada aun"}
 {f"Internet: {info_web}" if info_web else ""}
 {f"Nota proactiva: {proactivo}" if proactivo else ""}
 {f"Plan de accion: {plan}" if plan else ""}
