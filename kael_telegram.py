@@ -17,6 +17,7 @@ app = Flask(__name__)
 client = chromadb.PersistentClient(path="kael_db")
 memoria = client.get_or_create_collection("kael")
 preferencias = client.get_or_create_collection("preferencias")
+fallos = client.get_or_create_collection("fallos")
 
 def guardar(texto, tipo="hecho"):
     try:
@@ -29,6 +30,16 @@ def guardar_preferencia(texto):
     try:
         id = datetime.now().strftime("%Y%m%d%H%M%S%f")
         preferencias.add(documents=[texto], ids=[id])
+    except:
+        pass
+
+def guardar_fallo(msg, respuesta, criterio):
+    try:
+        id = datetime.now().strftime("%Y%m%d%H%M%S%f")
+        fallos.add(
+            documents=[f"MSG: {msg} | RESP: {respuesta} | FALLO: {criterio}"],
+            ids=[id]
+        )
     except:
         pass
 
@@ -53,6 +64,9 @@ def buscar_preferencias(query):
 def detectar_reset(msg):
     return any(p in msg.lower() for p in ["olvida todo","borra tu memoria","empieza de cero","limpia tu memoria"])
 
+def detectar_correccion(msg):
+    return any(p in msg.lower() for p in ["eso estuvo mal","no me respondas asi","estuviste mal","no inventes","eso estuvo incorrecto","corrigete","eso no es correcto"])
+
 def buscar_web(query):
     try:
         with DDGS() as ddgs:
@@ -74,6 +88,62 @@ def ollama(prompt, timeout=30):
     except:
         return ""
 
+def agente_reflexion(msg, respuesta, mem_pref, info_web):
+    evaluacion = ollama(f"""Evalua esta respuesta de KAEL con estos 18 criterios. Para cada criterio responde PASS o FAIL.
+
+Mensaje del usuario: "{msg}"
+Respuesta de KAEL: "{respuesta}"
+Preferencias conocidas: {mem_pref if mem_pref else "ninguna"}
+Info de internet usada: {info_web if info_web else "ninguna"}
+
+Criterios:
+1. Precision: no invento datos
+2. Relevancia: respondio lo que se pregunto
+3. Completitud: no falta info importante
+4. Tono: tono apropiado para el contexto
+5. Memoria: uso bien lo que sabe del usuario
+6. Concision: max 3 oraciones
+7. Coherencia: tiene sentido internamente
+8. Utilidad: realmente ayudo
+9. Idioma: respondio solo en español
+10. Contradiccion: no contradijo la memoria
+11. Privacidad: no revelo info indebida
+12. Alucinacion: no invento hechos especificos
+13. Instrucciones: respeto las reglas de KAEL
+14. Contexto emocional: no invento estados de animo
+15. Longitud: respeto limite de 3 oraciones
+16. Nombre: no uso el nombre innecesariamente
+17. Saludo: no inicio con saludo innecesario
+18. Fuentes: uso correctamente la info de internet
+
+Responde en formato:
+FALLOS: [lista de numeros que fallaron separados por coma, o NINGUNO si todos pasaron]
+RESUMEN: [una oracion de que estuvo mal]""", timeout=15)
+    
+    if "FALLOS: NINGUNO" in evaluacion or "NINGUNO" in evaluacion:
+        return True, []
+    
+    fallos_detectados = []
+    if "FALLOS:" in evaluacion:
+        linea_fallos = [l for l in evaluacion.split("\n") if "FALLOS:" in l]
+        if linea_fallos:
+            nums = linea_fallos[0].replace("FALLOS:", "").strip()
+            fallos_detectados = [n.strip() for n in nums.split(",") if n.strip().isdigit()]
+    
+    return len(fallos_detectados) == 0, fallos_detectados
+
+def agente_autocorreccion(msg, respuesta_mala, fallos_detectados, mem, mem_pref, info_web):
+    return ollama(f"""La respuesta anterior de KAEL tuvo problemas en estos criterios: {', '.join(fallos_detectados)}
+
+Mensaje original: "{msg}"
+Respuesta incorrecta: "{respuesta_mala}"
+Memoria: {mem if mem else "nada"}
+Preferencias: {mem_pref if mem_pref else "nada"}
+{f"Info internet: {info_web}" if info_web else ""}
+
+Genera una respuesta MEJORADA que corrija exactamente esos problemas.
+Reglas: max 3 oraciones, sin saludos, sin nombre innecesario, solo español, no inventes nada:""", timeout=25)
+
 def agente_clasificador(msg):
     return ollama(f'Clasifica en UNA palabra: medico, busqueda, personal, general.\nMensaje: "{msg}"\nClasificacion:', timeout=8).lower().strip()
 
@@ -83,8 +153,8 @@ def agente_contradiccion(msg, mem_pref):
     resultado = ollama(f'''Revisa si este mensaje contradice lo que ya sabes del usuario.
 Lo que sabes: {mem_pref}
 Mensaje nuevo: "{msg}"
-Si hay contradiccion clara responde: CONTRADICCION: [que contradice]
-Si no hay contradiccion: OK
+Si hay contradiccion clara: CONTRADICCION: [que contradice]
+Si no: OK
 Resultado:''', timeout=10)
     if "CONTRADICCION" in resultado:
         return resultado.replace("CONTRADICCION:", "").strip()
@@ -115,16 +185,24 @@ def agente_patrones(msg):
 def agente_proactivo(mem_pref, msg):
     if not mem_pref or len(mem_pref) < 20:
         return ""
-    obs = ollama(f'Solo si hay algo URGENTE basado en preferencias del usuario: 1 oracion. Si no: NADA\nPreferencias: {mem_pref}\nMensaje: "{msg}"\nObservacion:', timeout=8)
+    obs = ollama(f'Solo si hay algo URGENTE basado en preferencias: 1 oracion. Si no: NADA\nPreferencias: {mem_pref}\nMensaje: "{msg}"\nObservacion:', timeout=8)
     return "" if not obs or "NADA" in obs else obs
 
 def procesar(msg, chat_id):
     if detectar_reset(msg):
         client.delete_collection("kael")
         client.delete_collection("preferencias")
+        client.delete_collection("fallos")
         client.get_or_create_collection("kael")
         client.get_or_create_collection("preferencias")
+        client.get_or_create_collection("fallos")
         bot.send_message(chat_id, "Memoria limpiada.")
+        return
+
+    if detectar_correccion(msg):
+        guardar_fallo("correccion_usuario", msg, "usuario_corrigio")
+        guardar(f"CORRECCION: {msg}", "correccion")
+        bot.send_message(chat_id, "Anotado. Aprenderé de eso.")
         return
 
     guardar(f"Usuario: {msg}", "conversacion")
@@ -133,7 +211,6 @@ def procesar(msg, chat_id):
     mem_pref = buscar_preferencias(msg)
     tipo = agente_clasificador(msg)
 
-    # Detectar contradiccion
     contradiccion = agente_contradiccion(msg, mem_pref)
     if contradiccion:
         bot.send_message(chat_id, f"Espera — antes sabía que {contradiccion}. ¿Cambió algo?")
@@ -169,6 +246,17 @@ Responde natural y directo. Maximo 3 oraciones. Sin saludos. SOLO español:"""
 
     if not respuesta:
         respuesta = "Estoy en modo reposo."
+        bot.send_message(chat_id, respuesta)
+        return
+
+    # Agente de reflexion
+    paso, fallos_detectados = agente_reflexion(msg, respuesta, mem_pref, info_web)
+
+    if not paso and fallos_detectados:
+        guardar_fallo(msg, respuesta, str(fallos_detectados))
+        respuesta_mejorada = agente_autocorreccion(msg, respuesta, fallos_detectados, mem, mem_pref, info_web)
+        if respuesta_mejorada:
+            respuesta = respuesta_mejorada
 
     guardar(f"KAEL: {respuesta}", "conversacion")
     bot.send_message(chat_id, respuesta)
