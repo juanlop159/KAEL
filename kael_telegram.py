@@ -4,21 +4,18 @@ import json
 import os
 from datetime import datetime
 from ddgs import DDGS
-import chromadb
 from flask import Flask, request as freq
+from supabase import create_client
 
-TOKEN = "8279085726:AAHOD1RkAfCppGH8gCFYCRAJ4t4tGTSuaxA"
-OLLAMA_URL = "https://4snn8ucg78igb2-11434.proxy.runpod.net"
+TOKEN = os.environ.get("TOKEN")
+OLLAMA_URL = os.environ.get("OLLAMA_URL")
 WEBHOOK_URL = "https://kael-production-16c8.up.railway.app"
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
-
-client = chromadb.PersistentClient(path="kael_db")
-memoria = client.get_or_create_collection("kael")
-preferencias = client.get_or_create_collection("preferencias")
-fallos = client.get_or_create_collection("fallos")
-meta_log = client.get_or_create_collection("meta_log")
+sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 meta_estado = {
     "correcciones_seguidas": 0,
@@ -45,11 +42,10 @@ REGLAS_CONSTITUCIONALES = [
 
 def meta_registrar_fallo(agente, msg, respuesta, criterio):
     try:
-        id = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        fallos.add(
-            documents=[f"AGENTE: {agente} | MSG: {msg} | RESP: {respuesta} | FALLO: {criterio}"],
-            ids=[id]
-        )
+        sb.table("fallos_log").insert({
+            "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            "agente": agente, "msg": msg, "respuesta": respuesta, "criterio": criterio
+        }).execute()
         meta_estado["fallos_por_agente"][agente] = meta_estado["fallos_por_agente"].get(agente, 0) + 1
     except:
         pass
@@ -73,8 +69,6 @@ def meta_agente_evaluar(chat_id):
             lineas.append(f"  - {agente}: {count} fallos")
     else:
         lineas.append("Sin fallos registrados.")
-    if meta_estado["agentes_desactivados"]:
-        lineas.append(f"\nAgentes desactivados: {', '.join(meta_estado['agentes_desactivados'])}")
     lineas.append(f"\nConversaciones totales: {meta_estado['total_conversaciones']}")
     propuestas = meta_agente_proponer()
     if propuestas:
@@ -98,13 +92,6 @@ def meta_agente_aplicar(chat_id):
                 if agente in p.lower():
                     meta_estado["timeouts"][agente] += 10
                     aplicadas.append(f"Timeout de '{agente}' -> {meta_estado['timeouts'][agente]}s")
-        try:
-            meta_log.add(
-                documents=[f"CAMBIO: {p} | {str(datetime.now())}"],
-                ids=[datetime.now().strftime("%Y%m%d%H%M%S%f")]
-            )
-        except:
-            pass
     meta_estado["cambios_pendientes"] = []
     if aplicadas:
         bot.send_message(chat_id, "Mejoras aplicadas:\n" + "\n".join([f"- {a}" for a in aplicadas]))
@@ -121,43 +108,39 @@ def meta_agente_cada_50(chat_id):
 
 def guardar(texto, tipo="hecho"):
     try:
-        id = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        memoria.add(documents=[texto], ids=[id], metadatas=[{"tipo": tipo}])
+        sb.table("memoria").insert({
+            "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            "texto": texto, "tipo": tipo
+        }).execute()
     except:
         pass
 
 def guardar_preferencia(texto):
     try:
-        id = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        preferencias.add(documents=[texto], ids=[id])
+        sb.table("preferencias").insert({
+            "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            "texto": texto
+        }).execute()
     except:
         pass
 
 def guardar_fallo(msg, respuesta, criterio):
-    try:
-        id = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        fallos.add(
-            documents=[f"MSG: {msg} | RESP: {respuesta} | FALLO: {criterio}"],
-            ids=[id]
-        )
-        meta_registrar_fallo("reflexion", msg, respuesta, criterio)
-    except:
-        pass
+    meta_registrar_fallo("reflexion", msg, respuesta, criterio)
 
 def buscar_memoria(query):
     try:
-        results = memoria.query(query_texts=[query], n_results=5)
-        if results["documents"][0]:
-            return " | ".join(results["documents"][0])
+        r = sb.table("memoria").select("texto").order("fecha", desc=True).limit(10).execute()
+        if r.data:
+            return " | ".join([x["texto"] for x in r.data])
     except:
         pass
     return ""
 
 def buscar_preferencias(query):
     try:
-        results = preferencias.query(query_texts=[query], n_results=5)
-        if results["documents"][0]:
-            return " | ".join(results["documents"][0])
+        r = sb.table("preferencias").select("texto").order("fecha", desc=True).limit(10).execute()
+        if r.data:
+            return " | ".join([x["texto"] for x in r.data])
     except:
         pass
     return ""
@@ -193,7 +176,7 @@ def ollama(prompt, timeout=30):
         return ""
 
 def agente_reflexion(msg, respuesta, mem_pref, info_web):
-    evaluacion = ollama(f"""Evalua esta respuesta de KAEL con estos 18 criterios. Para cada criterio responde PASS o FAIL.
+    evaluacion = ollama(f"""Evalua esta respuesta de KAEL con estos 18 criterios.
 
 Mensaje del usuario: "{msg}"
 Respuesta de KAEL: "{respuesta}"
@@ -221,32 +204,31 @@ Criterios:
 18. Fuentes: uso correctamente la info de internet
 
 Responde en formato:
-FALLOS: [lista de numeros que fallaron separados por coma, o NINGUNO si todos pasaron]
-RESUMEN: [una oracion de que estuvo mal]""", timeout=15)
+FALLOS: [lista de numeros separados por coma, o NINGUNO]
+RESUMEN: [una oracion]""", timeout=15)
 
-    if "FALLOS: NINGUNO" in evaluacion or "NINGUNO" in evaluacion:
+    if not evaluacion or "NINGUNO" in evaluacion:
         return True, []
 
     fallos_detectados = []
     if "FALLOS:" in evaluacion:
-        linea_fallos = [l for l in evaluacion.split("\n") if "FALLOS:" in l]
-        if linea_fallos:
-            nums = linea_fallos[0].replace("FALLOS:", "").strip()
+        linea = [l for l in evaluacion.split("\n") if "FALLOS:" in l]
+        if linea:
+            nums = linea[0].replace("FALLOS:", "").strip()
             fallos_detectados = [n.strip() for n in nums.split(",") if n.strip().isdigit()]
 
     return len(fallos_detectados) == 0, fallos_detectados
 
 def agente_autocorreccion(msg, respuesta_mala, fallos_detectados, mem, mem_pref, info_web):
-    return ollama(f"""La respuesta anterior de KAEL tuvo problemas en estos criterios: {', '.join(fallos_detectados)}
+    return ollama(f"""La respuesta anterior tuvo problemas en: {', '.join(fallos_detectados)}
 
-Mensaje original: "{msg}"
+Mensaje: "{msg}"
 Respuesta incorrecta: "{respuesta_mala}"
 Memoria: {mem if mem else "nada"}
 Preferencias: {mem_pref if mem_pref else "nada"}
-{f"Info internet: {info_web}" if info_web else ""}
+{f"Internet: {info_web}" if info_web else ""}
 
-Genera una respuesta MEJORADA que corrija exactamente esos problemas.
-Reglas: max 3 oraciones, sin saludos, sin nombre innecesario, solo español, no inventes nada:""", timeout=25)
+Genera respuesta MEJORADA. Max 3 oraciones, sin saludos, solo español:""", timeout=25)
 
 def agente_clasificador(msg):
     return ollama(f'Clasifica en UNA palabra: medico, busqueda, personal, general.\nMensaje: "{msg}"\nClasificacion:', timeout=8).lower().strip()
@@ -254,54 +236,51 @@ def agente_clasificador(msg):
 def agente_contradiccion(msg, mem_pref):
     if not mem_pref:
         return ""
-    resultado = ollama(f'''Revisa si este mensaje contradice lo que ya sabes del usuario.
+    resultado = ollama(f'''Revisa si este mensaje contradice lo que sabes del usuario.
 Lo que sabes: {mem_pref}
 Mensaje nuevo: "{msg}"
-Si hay contradiccion clara: CONTRADICCION: [que contradice]
-Si no: OK
-Resultado:''', timeout=10)
+Si hay contradiccion: CONTRADICCION: [que contradice]
+Si no: OK''', timeout=10)
     if "CONTRADICCION" in resultado:
         return resultado.replace("CONTRADICCION:", "").strip()
     return ""
 
 def agente_razonador(msg, mem, mem_pref, info_web, tipo):
     contexto_extra = "Razona con perspectiva clinica." if tipo == "medico" else ""
-    return ollama(f'''Analiza brevemente antes de responder.
-Conversaciones recientes: {mem if mem else "nada aun"}
-Preferencias del usuario: {mem_pref if mem_pref else "nada aun"}
+    return ollama(f'''Analiza brevemente.
+Conversaciones recientes: {mem if mem else "nada"}
+Preferencias: {mem_pref if mem_pref else "nada"}
 {f"Internet: {info_web}" if info_web else ""}
-Tipo: {tipo}
-{contexto_extra}
+Tipo: {tipo}. {contexto_extra}
 Mensaje: "{msg}"
-Que quiere realmente? Que es relevante? Es urgente?
+Que quiere? Es urgente?
 Razonamiento:''', timeout=20)
 
 def agente_planificador(msg, razonamiento):
     if not any(p in msg.lower() for p in ["haz","agenda","recuerda","programa","crea","planifica","organiza"]):
         return ""
-    return ollama(f'Divide en pasos concretos (max 3). Si necesitas calendario: [REQUIERE_CALENDARIO]\nTarea: "{msg}"\nPasos:', timeout=10)
+    return ollama(f'Divide en pasos concretos (max 3).\nTarea: "{msg}"\nPasos:', timeout=10)
 
 def agente_patrones(msg):
-    patron = ollama(f'Hay patron claro de comportamiento en este mensaje? Si si: menos de 10 palabras. Si no: NINGUNO\nMensaje: "{msg}"\nPatron:', timeout=8)
+    patron = ollama(f'Patron de comportamiento en este mensaje en menos de 10 palabras. Si no hay: NINGUNO\nMensaje: "{msg}"\nPatron:', timeout=8)
     if patron and "NINGUNO" not in patron and len(patron) < 100:
         guardar(f"PATRON: {patron}", "patron")
 
 def agente_proactivo(mem_pref, msg):
     if not mem_pref or len(mem_pref) < 20:
         return ""
-    obs = ollama(f'Solo si hay algo URGENTE basado en preferencias: 1 oracion. Si no: NADA\nPreferencias: {mem_pref}\nMensaje: "{msg}"\nObservacion:', timeout=8)
+    obs = ollama(f'Solo si hay algo URGENTE: 1 oracion. Si no: NADA\nPreferencias: {mem_pref}\nMensaje: "{msg}"\nObservacion:', timeout=8)
     return "" if not obs or "NADA" in obs else obs
 
 def procesar(msg, chat_id):
     meta_estado["total_conversaciones"] += 1
 
     if detectar_reset(msg):
-        client.delete_collection("kael")
-        client.delete_collection("preferencias")
-        client.delete_collection("fallos")
-        client.get_or_create_collection("kael")
-        client.get_or_create_collection("preferencias")
-        client.get_or_create_collection("fallos")
+        try:
+            sb.table("memoria").delete().neq("id", "x").execute()
+            sb.table("preferencias").delete().neq("id", "x").execute()
+        except:
+            pass
         meta_estado["fallos_por_agente"] = {}
         meta_estado["correcciones_seguidas"] = 0
         bot.send_message(chat_id, "Memoria limpiada.")
