@@ -7,9 +7,9 @@ from ddgs import DDGS
 import chromadb
 from flask import Flask, request as freq
 
-TOKEN = TOKEN = "8279085726:AAHOD1RkAfCppGH8gCFYCRAJ4t4tGTSuaxA"
-OLLAMA_URL = "https://4snn8ucg78igb2-11434.proxy.runpod.net”
-WEBHOOK_URL = "https://kael-production-16c8.up.railway.app”
+TOKEN = "8279085726:AAHOD1RkAfCppGH8gCFYCRAJ4t4tGTSuaxA"
+OLLAMA_URL = "https://4snn8ucg78igb2-11434.proxy.runpod.net"
+WEBHOOK_URL = "https://kael-production-16c8.up.railway.app"
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(**name**)
