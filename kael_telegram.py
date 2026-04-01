@@ -6,6 +6,7 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 import chromadb
 from flask import Flask, request as freq
+import threading
 
 TOKEN = “8279085726:AAHOD1RkAfCppGH8gCFYCRAJ4t4tGTSuaxA”
 OLLAMA_URL = “https://4snn8ucg78igb2-11434.proxy.runpod.net”
@@ -322,9 +323,9 @@ timeout=meta_estado[“timeouts”][“proactivo”]
 )
 return “” if not obs or “NADA” in obs else obs
 
-# ─── PROCESADOR PRINCIPAL ────────────────────────────────────────────────────
+# ─── PROCESADOR CON STREAMING ────────────────────────────────────────────────
 
-def procesar(msg, chat_id):
+def procesar_stream(msg, chat_id):
 meta_estado[“total_conversaciones”] += 1
 
 ```
@@ -409,24 +410,51 @@ Juan Luis dice: “{msg}”
 Responde natural y directo. Maximo 3 oraciones. Sin saludos. SOLO español:”””
 
 ```
-respuesta = ollama(prompt, timeout=60)
+# Streaming — manda mensaje vacío y lo va editando
+mensaje_id = bot.send_message(chat_id, "...").message_id
+respuesta_completa = ""
+ultimo_update = ""
 
-if not respuesta:
-    respuesta = "Estoy en modo reposo."
-    bot.send_message(chat_id, respuesta)
-    return
+try:
+    response = requests.post(
+        f"{OLLAMA_URL}/api/generate",
+        json={"model": "kael", "prompt": prompt, "stream": True},
+        stream=True,
+        timeout=120
+    )
+    for line in response.iter_lines():
+        if line:
+            chunk = json.loads(line)
+            token = chunk.get("response", "")
+            respuesta_completa += token
+            if len(respuesta_completa) - len(ultimo_update) > 15:
+                try:
+                    bot.edit_message_text(respuesta_completa, chat_id, mensaje_id)
+                    ultimo_update = respuesta_completa
+                except:
+                    pass
+            if chunk.get("done"):
+                break
+    if respuesta_completa:
+        bot.edit_message_text(respuesta_completa, chat_id, mensaje_id)
+except:
+    if not respuesta_completa:
+        bot.edit_message_text("Estoy en modo reposo.", chat_id, mensaje_id)
+        return
 
-paso, fallos_detectados = agente_reflexion(msg, respuesta, mem_pref, info_web)
-
+paso, fallos_detectados = agente_reflexion(msg, respuesta_completa, mem_pref, info_web)
 if not paso and fallos_detectados:
-    guardar_fallo(msg, respuesta, str(fallos_detectados))
-    respuesta_mejorada = agente_autocorreccion(msg, respuesta, fallos_detectados, mem, mem_pref, info_web)
+    guardar_fallo(msg, respuesta_completa, str(fallos_detectados))
+    respuesta_mejorada = agente_autocorreccion(msg, respuesta_completa, fallos_detectados, mem, mem_pref, info_web)
     if respuesta_mejorada:
-        respuesta = respuesta_mejorada
+        try:
+            bot.edit_message_text(respuesta_mejorada, chat_id, mensaje_id)
+            respuesta_completa = respuesta_mejorada
+        except:
+            pass
 
-guardar(f"KAEL: {respuesta}", "conversacion")
+guardar(f"KAEL: {respuesta_completa}", "conversacion")
 meta_agente_cada_50(chat_id)
-bot.send_message(chat_id, respuesta)
 ```
 
 # ─── WEBHOOK ─────────────────────────────────────────────────────────────────
@@ -436,7 +464,9 @@ def webhook():
 update = telebot.types.Update.de_json(freq.data.decode(“utf-8”))
 if update.message and update.message.text:
 bot.send_chat_action(update.message.chat.id, “typing”)
-procesar(update.message.text, update.message.chat.id)
+t = threading.Thread(target=procesar_stream, args=(update.message.text, update.message.chat.id))
+t.daemon = True
+t.start()
 return “OK”, 200
 
 @app.route(”/”)
@@ -446,5 +476,5 @@ return “KAEL activo”, 200
 if **name** == “**main**”:
 bot.remove_webhook()
 bot.set_webhook(url=f”{WEBHOOK_URL}/{TOKEN}”)
-print(“KAEL con meta-agente activo”)
+print(“KAEL con meta-agente y streaming activo”)
 app.run(host=“0.0.0.0”, port=8080)
